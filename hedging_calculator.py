@@ -109,7 +109,7 @@ else:
 
 
 # ==============================================================================
-# 側邊欄顯示 MA 計算結果 (新增區塊 - 解決預設值問題)
+# 側邊欄顯示 MA 計算結果 (優化預設值顯示)
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader(f"計算結果：大盤 ({ma_days} 日均線)")
@@ -120,13 +120,14 @@ is_default_ma = st.session_state['ma_price_twii'] == INITIAL_MA_TWII_DEFAULT
 ma_display_label = f"{TICKER_TWII} MA 點"
 
 if is_default_ma:
-    # 顯示提示訊息，而不是數字
+    # 顯示提示訊息，而不是誤導性的數字
     st.sidebar.info("請先點擊上方按鈕載入數據，MA 點位才會顯示。")
     ma_display_value = f"預設值: {INITIAL_MA_TWII_DEFAULT} 點"
     ma_display_delta = None
 else:
+    # 顯示實際計算出的點位
     ma_display_value = f"{st.session_state['ma_price_twii']:,.0f} 點"
-    ma_display_delta = None # 這裡不計算 Delta 變化量，保持簡潔
+    ma_display_delta = None 
 
 # 僅顯示大盤的均線點
 st.sidebar.metric(
