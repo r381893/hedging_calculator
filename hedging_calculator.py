@@ -17,45 +17,50 @@ LEVERAGE_RATIO = 2.0
 MTX_POINT_VALUE = 50 
 
 st.set_page_config(
-    page_title="📈 00631 均線避險口數計算機", 
+    page_title="📈 00631 大盤避險口數計算機", 
     layout="wide"
 )
 
-st.title("🛡️ 00631 均線避險口數計算機")
-st.caption(f"本計算機基於 **{TICKER_631} (兩倍槓桿)** 與 **台指小台 (每點 {MTX_POINT_VALUE} 元)** 進行風險對沖。")
+st.title("🛡️ 00631 大盤均線避險口數計算機")
+st.caption(f"避險訊號以 **大盤 ({TICKER_TWII}) 的均線** 為準，計算基於 **{TICKER_631} (兩倍槓桿)**。")
 
 
 # ==============================================================================
-# 數據抓取與 MA 計算函式
+# 數據抓取與 MA 計算函式 (針對大盤)
 # ==============================================================================
 
 @st.cache_data(ttl=600) 
-def fetch_data_and_calculate_ma(ticker, ma_days):
-    """從 Yahoo Finance 抓取數據並計算移動平均"""
+def fetch_data_for_exposure(ticker):
+    """抓取資產最新價格 (僅用於計算風險敞口)"""
     try:
-        # 抓取最近六個月的數據，確保有足夠的數據計算長週期均線
-        data = yf.download(ticker, period='6mo', interval='1d', progress=False)
+        data = yf.download(ticker, period='2d', interval='1d', progress=False)
+        if not data.empty and 'Close' in data.columns:
+            latest_price = data['Close'].iloc[-1]
+            return round(float(latest_price), 2)
+        return None
+    except Exception as e:
+        print(f"❌ 抓取 {ticker} 最新價失敗: {e}")
+        return None
+
+@st.cache_data(ttl=600) 
+def fetch_twii_and_calculate_ma(ma_days):
+    """抓取台指數據並計算移動平均 (用於避險訊號)"""
+    try:
+        # 抓取最近六個月的數據
+        data = yf.download(TICKER_TWII, period='6mo', interval='1d', progress=False)
         
         if data.empty or 'Close' not in data.columns:
-            return None, None # 返回 None, None (最新價, 均線價)
+            return None, None # 返回 None, None (最新點位, 均線點位)
         
-        # 1. 計算最新價格
         latest_price = data['Close'].iloc[-1]
-        
-        # 2. 計算移動平均
         data['MA'] = data['Close'].rolling(window=ma_days).mean()
         ma_price = data['MA'].iloc[-1]
 
-        # 處理數據格式
-        if ticker == TICKER_TWII:
-            # 指數點位取整數
-            return int(round(latest_price, 0)), int(round(ma_price, 0))
-        else:
-            # 股價保留兩位小數
-            return round(float(latest_price), 2), round(float(ma_price), 2)
+        # 指數點位取整數
+        return int(round(latest_price, 0)), int(round(ma_price, 0))
         
     except Exception as e:
-        print(f"❌ 抓取 {ticker} 數據發生錯誤: {e}")
+        print(f"❌ 抓取 {TICKER_TWII} 數據發生錯誤: {e}")
         return None, None
 
 # ==============================================================================
@@ -64,62 +69,50 @@ def fetch_data_and_calculate_ma(ticker, ma_days):
 st.sidebar.header("📜 避險策略設定")
 
 ma_days = st.sidebar.number_input(
-    "均線設定天數 (e.g., 13, 20, 60)",
+    "大盤均線設定天數 (e.g., 13, 20, 60)",
     min_value=1,
     value=13,  # 預設值設定為 13
     step=1,
-    help="設定您判斷多空趨勢所使用的均線週期。"
+    help="設定您判斷大盤多空趨勢所使用的均線週期。"
 )
 
 # ==============================================================================
-# 數據獲取與按鈕 (現在同時抓取最新價和均線價)
+# 數據獲取與按鈕 (僅對大盤執行 MA 計算)
 # ==============================================================================
 
-if st.button("🚀 點擊獲取最新市場數據 (含均線計算)", type="primary"):
-    # 抓取 00631 數據
-    latest_price_631, ma_price_631 = fetch_data_and_calculate_ma(TICKER_631, ma_days)
+if st.button("🚀 點擊獲取最新市場數據 (含大盤均線計算)", type="primary"):
+    # 1. 抓取 00631 最新價 (僅用於計算風險敞口)
+    latest_price_631 = fetch_data_for_exposure(TICKER_631)
     
-    # 抓取台指加權指數數據
-    latest_index_twii, ma_price_twii = fetch_data_and_calculate_ma(TICKER_TWII, ma_days)
+    # 2. 抓取台指加權指數最新點位和 MA 點位
+    latest_index_twii, ma_price_twii = fetch_twii_and_calculate_ma(ma_days)
     
     # 判斷數據是否成功抓取
     if latest_price_631 is not None and latest_index_twii is not None:
         st.session_state['price_631_default'] = latest_price_631
         st.session_state['index_twii_default'] = latest_index_twii
-        st.session_state['ma_price_631'] = ma_price_631
-        st.session_state['ma_price_twii'] = ma_price_twii
-        st.success(f"✅ 數據更新成功！00631 MA 價: {ma_price_631:,.2f} | 台指 MA 點: {ma_price_twii:,.0f}")
+        st.session_state['ma_price_twii'] = ma_price_twii # 只儲存大盤 MA
+        st.success(f"✅ 數據更新成功！大盤 ({TICKER_TWII}) MA 點: {ma_price_twii:,.0f}")
     else:
         st.warning("⚠️ 數據抓取或計算均線失敗！請檢查 ticker 或稍後再試。")
 else:
-    # 設置初始狀態值 (確保初始值也是匹配的整數/浮點數，且新增 MA 初始值)
+    # 設置初始狀態值 
     if 'price_631_default' not in st.session_state:
         st.session_state['price_631_default'] = 50.0 
     if 'index_twii_default' not in st.session_state:
         st.session_state['index_twii_default'] = 19500 
-    if 'ma_price_631' not in st.session_state:
-        st.session_state['ma_price_631'] = 48.0 # 初始預設 MA 
     if 'ma_price_twii' not in st.session_state:
         st.session_state['ma_price_twii'] = 19000 # 初始預設 MA
 
 
 # ==============================================================================
-# 側邊欄顯示 MA 計算結果 (新增區塊)
+# 側邊欄顯示 MA 計算結果 (僅顯示大盤)
 # ==============================================================================
 st.sidebar.markdown("---")
-st.sidebar.subheader("計算結果：均線點位")
+st.sidebar.subheader(f"計算結果：大盤 ({ma_days} 日均線)")
 
-col_ma1, col_ma2 = st.sidebar.columns(2)
-
-# 顯示 00631 的均線價
-col_ma1.metric(
-    f"{TICKER_631} MA 價",
-    f"{st.session_state['ma_price_631']:,.2f} 元",
-    help=f"最新的 {ma_days} 日移動平均價格。"
-)
-
-# 顯示台指的均線點
-col_ma2.metric(
+# 僅顯示大盤的均線點
+st.sidebar.metric(
     f"{TICKER_TWII} MA 點",
     f"{st.session_state['ma_price_twii']:,.0f} 點",
     help=f"最新的 {ma_days} 日移動平均點位。"
@@ -132,7 +125,7 @@ ma_signal = st.sidebar.selectbox(
     "1. 均線訊號判斷（進場/出場條件）",
     options=["收盤價在均線上方 (多頭)", "收盤價在均線下方 (空頭/避險)", "保持中立"],
     index=0,
-    help=f"您判斷 {ma_days} 日均線的結果。請對比上方 MA 點位與您輸入的最新價格。"
+    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。請對比上方 MA 點位與您輸入的最新點位。"
 )
 
 current_status = st.sidebar.selectbox(
@@ -273,4 +266,4 @@ else:
     col7.metric("🔥 建議操作口數 (口)", "0")
 
 st.markdown("---")
-st.info(f"**💡 避險邏輯摘要：** (基於 **{ma_days} 日均線**)\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(suggested_lots):,} 口** 來確保足額對沖。\n\n**數據更新時間：** 點擊「🚀 獲取最新市場數據」按鈕後，數據會在 10 分鐘內被快取（不會重複抓取），並計算 {ma_days} 日均線。")
+st.info(f"**💡 避險邏輯摘要：** (基於 **大盤 {ma_days} 日均線**)\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(suggested_lots):,} 口** 來確保足額對沖。\n\n**數據更新時間：** 點擊「🚀 獲取最新市場數據」按鈕後，數據會在 10 分鐘內被快取，並計算 {ma_days} 日均線。")
