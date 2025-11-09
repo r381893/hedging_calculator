@@ -16,6 +16,10 @@ LEVERAGE_RATIO = 2.0
 # 台指小台（MTX）每點價值
 MTX_POINT_VALUE = 50 
 
+# 定義初始預設值，用於判斷是否為未載入數據的狀態
+INITIAL_MA_TWII_DEFAULT = 19000
+INITIAL_INDEX_TWII_DEFAULT = 19500
+
 st.set_page_config(
     page_title="📈 00631 大盤避險口數計算機", 
     layout="wide"
@@ -26,7 +30,7 @@ st.caption(f"避險訊號以 **大盤 ({TICKER_TWII}) 的均線** 為準，計�
 
 
 # ==============================================================================
-# 數據抓取與 MA 計算函式 (針對大盤)
+# 數據抓取與 MA 計算函式
 # ==============================================================================
 
 @st.cache_data(ttl=600) 
@@ -46,11 +50,10 @@ def fetch_data_for_exposure(ticker):
 def fetch_twii_and_calculate_ma(ma_days):
     """抓取台指數據並計算移動平均 (用於避險訊號)"""
     try:
-        # 抓取最近六個月的數據
         data = yf.download(TICKER_TWII, period='6mo', interval='1d', progress=False)
         
         if data.empty or 'Close' not in data.columns:
-            return None, None # 返回 None, None (最新點位, 均線點位)
+            return None, None 
         
         latest_price = data['Close'].iloc[-1]
         data['MA'] = data['Close'].rolling(window=ma_days).mean()
@@ -81,7 +84,7 @@ ma_days = st.sidebar.number_input(
 # ==============================================================================
 
 if st.button("🚀 點擊獲取最新市場數據 (含大盤均線計算)", type="primary"):
-    # 1. 抓取 00631 最新價 (僅用於計算風險敞口)
+    # 1. 抓取 00631 最新價 
     latest_price_631 = fetch_data_for_exposure(TICKER_631)
     
     # 2. 抓取台指加權指數最新點位和 MA 點位
@@ -91,7 +94,7 @@ if st.button("🚀 點擊獲取最新市場數據 (含大盤均線計算)", type
     if latest_price_631 is not None and latest_index_twii is not None:
         st.session_state['price_631_default'] = latest_price_631
         st.session_state['index_twii_default'] = latest_index_twii
-        st.session_state['ma_price_twii'] = ma_price_twii # 只儲存大盤 MA
+        st.session_state['ma_price_twii'] = ma_price_twii 
         st.success(f"✅ 數據更新成功！大盤 ({TICKER_TWII}) MA 點: {ma_price_twii:,.0f}")
     else:
         st.warning("⚠️ 數據抓取或計算均線失敗！請檢查 ticker 或稍後再試。")
@@ -100,21 +103,36 @@ else:
     if 'price_631_default' not in st.session_state:
         st.session_state['price_631_default'] = 50.0 
     if 'index_twii_default' not in st.session_state:
-        st.session_state['index_twii_default'] = 19500 
+        st.session_state['index_twii_default'] = INITIAL_INDEX_TWII_DEFAULT 
     if 'ma_price_twii' not in st.session_state:
-        st.session_state['ma_price_twii'] = 19000 # 初始預設 MA
+        st.session_state['ma_price_twii'] = INITIAL_MA_TWII_DEFAULT # 初始預設 MA
 
 
 # ==============================================================================
-# 側邊欄顯示 MA 計算結果 (僅顯示大盤)
+# 側邊欄顯示 MA 計算結果 (新增區塊 - 解決預設值問題)
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader(f"計算結果：大盤 ({ma_days} 日均線)")
 
+# 判斷是否為初始預設值
+is_default_ma = st.session_state['ma_price_twii'] == INITIAL_MA_TWII_DEFAULT
+
+ma_display_label = f"{TICKER_TWII} MA 點"
+
+if is_default_ma:
+    # 顯示提示訊息，而不是數字
+    st.sidebar.info("請先點擊上方按鈕載入數據，MA 點位才會顯示。")
+    ma_display_value = f"預設值: {INITIAL_MA_TWII_DEFAULT} 點"
+    ma_display_delta = None
+else:
+    ma_display_value = f"{st.session_state['ma_price_twii']:,.0f} 點"
+    ma_display_delta = None # 這裡不計算 Delta 變化量，保持簡潔
+
 # 僅顯示大盤的均線點
 st.sidebar.metric(
-    f"{TICKER_TWII} MA 點",
-    f"{st.session_state['ma_price_twii']:,.0f} 點",
+    ma_display_label,
+    ma_display_value,
+    delta=ma_display_delta,
     help=f"最新的 {ma_days} 日移動平均點位。"
 )
 
@@ -125,7 +143,7 @@ ma_signal = st.sidebar.selectbox(
     "1. 均線訊號判斷（進場/出場條件）",
     options=["收盤價在均線上方 (多頭)", "收盤價在均線下方 (空頭/避險)", "保持中立"],
     index=0,
-    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。請對比上方 MA 點位與您輸入的最新點位。"
+    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。"
 )
 
 current_status = st.sidebar.selectbox(
@@ -139,7 +157,7 @@ st.sidebar.header("📊 持倉與市場數據")
 
 
 # ==============================================================================
-# 主頁面輸入：市場數據
+# 主頁面輸入：市場數據 (保持不變)
 # ==============================================================================
 col1, col2, col3 = st.columns(3)
 
@@ -173,20 +191,10 @@ with col2:
 # ==============================================================================
 # 計算邏輯 (保持不變)
 # ==============================================================================
-
-# 1. 00631 總名目價值（1X）
 nominal_value_1x = holding_lots * 1000 * price_631
-
-# 2. 實際風險敞口（2X 槓桿部位）
 effective_exposure = nominal_value_1x * LEVERAGE_RATIO
-
-# 3. 台指小台合約價值
 mtx_contract_value = current_index * MTX_POINT_VALUE
-
-# 4. 應避險的理論口數（未取整數）
 required_lots_float = effective_exposure / mtx_contract_value
-
-# 5. 決定建議口數（避險通常建議至少足額）
 required_lots_ceil = np.ceil(required_lots_float)
 
 
@@ -218,7 +226,7 @@ elif ma_signal == "收盤價在均線上方 (多頭)":
         action_required = "🟡 保持中立狀態 (無須避險)"
         suggested_lots = 0
 
-else: # 保持中立（當均線判斷模糊時）
+else: 
     action_required = "🟡 市場判斷不明，建議維持現狀或使用更長週期的均線。"
     suggested_lots = required_lots_ceil if current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)" else 0
 
