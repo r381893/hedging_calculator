@@ -144,7 +144,7 @@ ma_signal = st.sidebar.selectbox(
     "1. 均線訊號判斷（進場/出場條件）",
     options=["收盤價在均線上方 (多頭)", "收盤價在均線下方 (空頭/避險)", "保持中立"],
     index=0,
-    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。"
+    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。**您必須手動選擇此處，App 才會給出避險建議。**"
 )
 
 current_status = st.sidebar.selectbox(
