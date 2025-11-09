@@ -16,31 +16,7 @@ LEVERAGE_RATIO = 2.0
 # 台指小台（MTX）每點價值
 MTX_POINT_VALUE = 50 
 
-# 定義初始預設值，用於判斷是否為未載入數據的狀態
-INITIAL_MA_TWII_DEFAULT = 19000
-INITIAL_INDEX_TWII_DEFAULT = 19500
-
-st.set_page_config(
-    page_title="📈 00631 大盤避險口數計算機", 
-    layout="wide"
-)
-
-st.title("🛡️ 00631 大盤均線避險口數計算機")
-st.caption(f"避險訊號以 **大盤 ({TICKER_TWII}) 的均線** 為準，計算基於 **{TICKER_631} (兩倍槓桿)**。")
-
-
-# ==============================================================================
-# 數據抓取與 MA 計算函式
-# ==============================================================================
-
-@st.cache_data(ttl=600) 
-def fetch_data_for_exposure(ticker):
-    """抓取資產最新價格 (僅用於計算風險敞口)"""
-    try:
-        # 使用 '1d' interval 和 '2d' period 來確保獲取當日收盤價（如果市場已收盤）
-        data = yf.download(ticker, period='2d', interval='1d', progress=False)
-        if not data.empty and 'Close' in data.columns:
-            latest_price = data['Close'].iloc[-1]
+# 定義初始預設值，用於判斷是否為未載入數據的狀態    
             return round(float(latest_price), 2)
         return None
     except Exception as e:
@@ -128,7 +104,8 @@ if is_default_ma:
     ma_display_delta = None
 else:
     # 顯示實際計算出的點位
-    ma_display_value = f"{st.session_state['ma_price_twii']:,.0f} 點"
+    ma_price_twii = st.session_state['ma_price_twii']
+    ma_display_value = f"{ma_price_twii:,.0f} 點"
     ma_display_delta = None 
 
 # 僅顯示大盤的均線點
@@ -141,14 +118,7 @@ st.sidebar.metric(
 
 st.sidebar.markdown("---")
 
-# 其他策略設定 (保持不變)
-ma_signal = st.sidebar.selectbox(
-    "1. 均線訊號判斷（進場/出場條件）",
-    options=["收盤價在均線上方 (多頭)", "收盤價在均線下方 (空頭/避險)", "保持中立"],
-    index=0,
-    help=f"您判斷大盤價格與 {ma_days} 日均線的結果。**您必須手動選擇此處，App 才會給出避險建議。**"
-)
-
+# **重要修改：移除手動訊號選擇，保留部位狀態**
 current_status = st.sidebar.selectbox(
     "2. 您目前的部位狀態",
     options=["目前持有 00631 多倉，未避險", "目前已避險 (持有 00631 多倉 + 小台空倉)"],
@@ -192,7 +162,7 @@ with col2:
     )
     
 # ==============================================================================
-# 計算邏輯
+# 計算邏輯 (風險敞口與避險口數)
 # ==============================================================================
 # 00631 名目價值 (1倍槓桿): 張數 * 1000股/張 * 價格
 nominal_value_1x = holding_lots * 1000 * price_631
@@ -207,37 +177,47 @@ required_lots_ceil = np.ceil(required_lots_float)
 
 
 # ==============================================================================
-# 結果展示
+# 策略判斷與結果展示 (根據您的策略自動判斷)
 # ==============================================================================
 st.markdown("---")
 st.subheader("🎯 避險動作與口數建議")
 
 action_required = ""
 suggested_lots = 0
+ma_price_twii = st.session_state.get('ma_price_twii', INITIAL_MA_TWII_DEFAULT) # 確保拿到 MA
 
-if ma_signal == "收盤價在均線下方 (空頭/避險)":
-    if current_status == "目前持有 00631 多倉，未避險":
-        action_required = "🔴 立即建立空單避險"
-        suggested_lots = required_lots_ceil
-    elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
-        action_required = "🟡 維持避險狀態 (維持空單)"
-        suggested_lots = required_lots_ceil
-        
-elif ma_signal == "收盤價在均線上方 (多頭)":
+# 1. 自動判斷均線訊號
+if current_index > ma_price_twii:
+    ma_signal_auto = "🟢 多頭 (指數在均線上方)"
+    is_bullish = True
+elif current_index <= ma_price_twii:
+    ma_signal_auto = "🔴 空頭/避險 (指數在均線下方或相等)"
+    is_bullish = False
+else:
+    ma_signal_auto = "🟡 無法判斷 (請檢查數據載入狀態)"
+    is_bullish = False
+
+# 顯示自動判斷的訊號
+st.metric(f"🤖 **自動判斷的 {ma_days} 日均線訊號**", ma_signal_auto, delta=None)
+st.markdown("---")
+
+
+# 2. 根據訊號和現狀給出操作建議
+if is_bullish: # 指數 > MA (多頭訊號，不需避險)
     if current_status == "目前持有 00631 多倉，未避險":
         action_required = "🟢 維持多倉狀態 (無須避險)"
         suggested_lots = 0
     elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
         action_required = "🟢 平倉避險空單 (解除避險)"
         suggested_lots = required_lots_ceil
-    else: 
-        action_required = "🟡 保持中立狀態 (無須避險)"
-        suggested_lots = 0
-
-else: # 保持中立
-    action_required = "🟡 市場判斷不明，建議維持現狀或使用更長週期的均線。"
-    # 如果已避險，中立訊號下建議維持避險；如果未避險，則維持未避險。
-    suggested_lots = required_lots_ceil if current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)" else 0
+        
+else: # 指數 <= MA (空頭/避險訊號，需要避險)
+    if current_status == "目前持有 00631 多倉，未避險":
+        action_required = "🔴 立即建立空單避險"
+        suggested_lots = required_lots_ceil
+    elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
+        action_required = "🟡 維持避險狀態 (維持空單)"
+        suggested_lots = required_lots_ceil
 
 
 # 輸出結果
