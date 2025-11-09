@@ -1,10 +1,16 @@
 import streamlit as st
 import numpy as np
+import yfinance as yf # 引入 yfinance 函式庫
 import pandas as pd
+from datetime import datetime, timedelta
 
 # ==============================================================================
 # 設定與常數
 # ==============================================================================
+# 股票代號 (Yahoo Finance Tickers)
+TICKER_631 = '00631L.TW'  # 元大台灣50正2
+TICKER_TWII = '^TWII'     # 台指加權指數
+
 # 00631 (元大台灣50正2) 的槓桿倍數
 LEVERAGE_RATIO = 2.0
 # 台指小台（MTX）每點價值
@@ -16,27 +22,66 @@ st.set_page_config(
 )
 
 st.title("🛡️ 00631 均線避險口數計算機")
-st.caption(f"本計算機基於 **00631（兩倍槓桿）** 與 **台指小台（每點 {MTX_POINT_VALUE} 元）** 進行風險對沖。")
+st.caption(f"本計算機基於 **{TICKER_631} (兩倍槓桿)** 與 **台指小台 (每點 {MTX_POINT_VALUE} 元)** 進行風險對沖。")
+
 
 # ==============================================================================
-# 側邊欄輸入：策略參數
+# 數據抓取函式 (使用 Streamlit 快取優化性能)
+# ==============================================================================
+
+@st.cache_data(ttl=600) # 設定 10 分鐘 (600秒) 的快取時間，避免頻繁呼叫 API
+def fetch_latest_price(ticker):
+    """從 Yahoo Finance 抓取最新的收盤價"""
+    try:
+        # 抓取最近兩天數據，確保拿到最新收盤價
+        data = yf.download(ticker, period='2d', interval='1d', progress=False)
+        if not data.empty:
+            # 使用最新一筆收盤價
+            latest_price = data['Close'].iloc[-1]
+            return round(latest_price, 2)
+        return None
+    except Exception as e:
+        st.error(f"❌ 抓取 {ticker} 數據失敗，錯誤: {e}")
+        return None
+
+# ==============================================================================
+# 數據獲取與按鈕
+# ==============================================================================
+
+# 創建一個按鈕，讓用戶手動觸發數據更新
+if st.button("🚀 點擊獲取最新市場價格", type="primary"):
+    latest_price_631 = fetch_latest_price(TICKER_631)
+    latest_index_twii = fetch_latest_price(TICKER_TWII)
+    
+    if latest_price_631 and latest_index_twii:
+        st.session_state['price_631_default'] = latest_price_631
+        st.session_state['index_twii_default'] = latest_index_twii
+        st.success(f"✅ 價格更新成功！{TICKER_631} 最新價: {latest_price_631:,.2f} | {TICKER_TWII} 最新點: {latest_index_twii:,.2f}")
+    else:
+        st.warning("數據抓取失敗，請手動輸入或稍後再試。")
+else:
+    # 設置初始狀態值，避免首次執行時出錯
+    if 'price_631_default' not in st.session_state:
+        st.session_state['price_631_default'] = 50.0 # 預設值
+    if 'index_twii_default' not in st.session_state:
+        st.session_state['index_twii_default'] = 19500 # 預設值
+
+
+# ==============================================================================
+# 側邊欄輸入：策略參數 (保持不變)
 # ==============================================================================
 st.sidebar.header("📜 避險策略設定")
 
-# 1. 均線訊號
 ma_signal = st.sidebar.selectbox(
     "1. 均線訊號判斷（進場/出場條件）",
     options=["收盤價在均線上方 (多頭)", "收盤價在均線下方 (空頭/避險)", "保持中立"],
     index=0,
-    help="這是決定是否啟動避險的技術分析訊號。"
 )
 
-# 2. 目前部位狀態
 current_status = st.sidebar.selectbox(
     "2. 您目前的部位狀態",
     options=["目前持有 00631 多倉，未避險", "目前已避險 (持有 00631 多倉 + 小台空倉)"],
     index=0,
-    help="您目前是否已經處於避險狀態？"
 )
 
 st.sidebar.markdown("---")
@@ -44,7 +89,7 @@ st.sidebar.header("📊 持倉與市場數據")
 
 
 # ==============================================================================
-# 主頁面輸入：市場數據
+# 主頁面輸入：市場數據 (使用 session_state 作為預設值)
 # ==============================================================================
 col1, col2, col3 = st.columns(3)
 
@@ -55,29 +100,28 @@ with col1:
         min_value=1, 
         value=7, 
         step=1,
-        help="您實際持有的 00631 股票張數。"
     )
+    # 使用 session_state 中的值作為預設值
     price_631 = st.number_input(
-        "00631 最新價格 (元/股)", 
+        f"00631 最新價格 (元/股) - 預設: {st.session_state['price_631_default']:,.2f}", 
         min_value=10.0, 
-        value=50.0, 
+        value=st.session_state['price_631_default'], 
         step=0.1,
         format="%.2f",
-        help="00631 ETF 的最新收盤或市價。"
     )
 
 with col2:
     st.subheader("市場資訊")
+    # 使用 session_state 中的值作為預設值
     current_index = st.number_input(
-        "台指加權指數 (點)", 
+        f"台指加權指數 (點) - 預設: {st.session_state['index_twii_default']:,.0f}", 
         min_value=5000, 
-        value=19500, 
+        value=st.session_state['index_twii_default'], 
         step=10,
-        help="目前台指加權指數的點位。"
     )
     
 # ==============================================================================
-# 計算邏輯
+# 計算邏輯 (保持不變)
 # ==============================================================================
 
 # 1. 00631 總名目價值（1X）
@@ -94,16 +138,14 @@ required_lots_float = effective_exposure / mtx_contract_value
 
 # 5. 決定建議口數（避險通常建議至少足額）
 required_lots_ceil = np.ceil(required_lots_float)
-required_lots_floor = np.floor(required_lots_float)
 
 
 # ==============================================================================
-# 結果展示
+# 結果展示 (保持邏輯不變，僅調整呈現)
 # ==============================================================================
 st.markdown("---")
 st.subheader("🎯 避險動作與口數建議")
 
-# 判斷結果
 action_required = ""
 suggested_lots = 0
 
@@ -114,9 +156,6 @@ if ma_signal == "收盤價在均線下方 (空頭/避險)":
     elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
         action_required = "🟡 維持避險狀態 (維持空單)"
         suggested_lots = required_lots_ceil
-    else: # 保持中立
-        action_required = "🟢 維持避險狀態 (維持空單)"
-        suggested_lots = required_lots_ceil
         
 elif ma_signal == "收盤價在均線上方 (多頭)":
     if current_status == "目前持有 00631 多倉，未避險":
@@ -124,15 +163,14 @@ elif ma_signal == "收盤價在均線上方 (多頭)":
         suggested_lots = 0
     elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
         action_required = "🟢 平倉避險空單 (解除避險)"
-        # 這裡建議的口數是平倉數量，我們假設平倉數量等於當初建議的建倉數量
-        suggested_lots = np.ceil(required_lots_float) 
-    else: # 保持中立
+        suggested_lots = required_lots_ceil
+    else: 
         action_required = "🟡 保持中立狀態 (無須避險)"
         suggested_lots = 0
 
 else: # 保持中立（當均線判斷模糊時）
     action_required = "🟡 市場判斷不明，建議維持現狀或使用更長週期的均線。"
-    suggested_lots = np.ceil(required_lots_float) if current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)" else 0
+    suggested_lots = required_lots_ceil if current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)" else 0
 
 
 # 輸出結果
@@ -150,26 +188,23 @@ col4, col5, col6, col7 = st.columns(4)
 col4.metric(
     "📊 實際風險敞口 (元)",
     f"{effective_exposure:,.0f} 元",
-    help=f"您持有的 {LEVERAGE_RATIO} 倍槓桿部位的總價值。"
 )
 
 col5.metric(
     f"🛠️ 小台合約價值 (元)",
     f"{mtx_contract_value:,.0f} 元",
-    help="目前指數點位下，單一口小台的總名目價值。"
 )
 
 col6.metric(
     "🔬 理論避險口數 (浮點數)",
     f"{required_lots_float:.2f} 口",
-    help="根據風險敞口精算出的理論口數。"
 )
 
-if suggested_lots > 0:
+if suggested_lots > 0 and "平倉" not in action_required:
     col7.metric(
         "🔥 建議操作口數 (口)",
-        f"{int(suggested_lots):,}",
-        help="實際操作時，建議四捨五入（或無條件進位）至整數口。"
+        f"建倉 {int(suggested_lots):,} 口",
+        help="建議無條件進位，確保足額對沖。"
     )
 elif "平倉" in action_required:
     col7.metric(
@@ -181,4 +216,4 @@ else:
     col7.metric("🔥 建議操作口數 (口)", "0")
 
 st.markdown("---")
-st.info(f"**💡 避險邏輯摘要：**\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(suggested_lots):,} 口** 來確保足額對沖。\n\n**風險提示：** 實際避險應考慮交易成本、追蹤誤差、及時性等因素。")
+st.info(f"**💡 避險邏輯摘要：**\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(suggested_lots):,} 口** 來確保足額對沖。\n\n**數據更新時間：** 點擊「🚀 獲取最新市場價格」按鈕後，數據會在 10 分鐘內被快取（不會重複抓取），以提升應用程式效能。")
