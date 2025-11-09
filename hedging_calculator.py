@@ -26,30 +26,28 @@ st.caption(f"本計算機基於 **{TICKER_631} (兩倍槓桿)** 與 **台指小�
 
 
 # ==============================================================================
-# 數據抓取函式 (使用 Streamlit 快取優化性能)
+# 數據抓取函式
 # ==============================================================================
 
-# 設定 10 分鐘 (600秒) 的快取時間
 @st.cache_data(ttl=600) 
 def fetch_latest_price(ticker):
-    """從 Yahoo Finance 抓取最新的收盤價，並返回 float 或 None"""
+    """從 Yahoo Finance 抓取最新的收盤價，並返回 float 或 int 或 None"""
     try:
-        # 抓取最近兩天數據，確保拿到最新收盤價
-        # interval='1d' 是確保只拿日線數據
         data = yf.download(ticker, period='2d', interval='1d', progress=False)
         
-        # 🚨 修正點：檢查 DataFrame 是否為空，且 'Close' 欄位存在
         if not data.empty and 'Close' in data.columns:
             latest_price = data['Close'].iloc[-1]
-            # 確保返回的是 Python float 而非 Pandas Series/numpy.float64
-            return round(float(latest_price), 2) 
+            
+            # 【🚨 修正點 A：如果是指數 (TWII)，強制轉換為整數 int() 🚨】
+            if ticker == TICKER_TWII:
+                return int(round(latest_price, 0)) # 指數通常四捨五入到整數點
+            else:
+                return round(float(latest_price), 2) 
         
-        # 數據為空或結構不正確，在執行 log 中顯示錯誤
         print(f"❌ 抓取 {ticker} 數據失敗：數據為空或結構不正確。")
-        return None # 失敗時返回 None
+        return None 
         
     except Exception as e:
-        # 在執行 log 中顯示詳細的錯誤信息
         print(f"❌ 抓取 {ticker} 數據發生錯誤: {e}")
         return None
 
@@ -57,29 +55,28 @@ def fetch_latest_price(ticker):
 # 數據獲取與按鈕
 # ==============================================================================
 
-# 創建一個按鈕，讓用戶手動觸發數據更新
 if st.button("🚀 點擊獲取最新市場價格", type="primary"):
     latest_price_631 = fetch_latest_price(TICKER_631)
     latest_index_twii = fetch_latest_price(TICKER_TWII)
     
-    # 🚨 修正點：使用 is not None 判斷數據是否成功抓取 (避免 Pandas ValueError)
     if latest_price_631 is not None and latest_index_twii is not None:
         st.session_state['price_631_default'] = latest_price_631
-        st.session_state['index_twii_default'] = latest_index_twii
+        # 【🚨 修正點 B：確保存入 session_state 的指數值是整數 🚨】
+        st.session_state['index_twii_default'] = int(latest_index_twii) 
         st.success(f"✅ 價格更新成功！{TICKER_631} 最新價: {latest_price_631:,.2f} | {TICKER_TWII} 最新點: {latest_index_twii:,.0f}")
     else:
-        # 如果任何一個抓取失敗，則警告並保留舊值 (或預設值)
         st.warning("⚠️ 數據抓取失敗！請檢查 ticker 是否正確或稍後再試。App 將使用預設或上次成功載入的值。")
 else:
-    # 設置初始狀態值，避免首次執行時出錯
+    # 設置初始狀態值 (確保初始值也是匹配的整數/浮點數)
     if 'price_631_default' not in st.session_state:
-        st.session_state['price_631_default'] = 50.0 # 預設值
+        st.session_state['price_631_default'] = 50.0 
     if 'index_twii_default' not in st.session_state:
-        st.session_state['index_twii_default'] = 19500.0 # 預設值
+        # 【🚨 修正點 C：確保初始預設值也是整數 🚨】
+        st.session_state['index_twii_default'] = 19500 
 
 
 # ==============================================================================
-# 側邊欄輸入：策略參數
+# 側邊欄輸入：策略參數 (代碼保持不變)
 # ==============================================================================
 st.sidebar.header("📜 避險策略設定")
 
@@ -112,7 +109,7 @@ with col1:
         value=7, 
         step=1,
     )
-    # 使用 session_state 中的值作為預設值
+    # 00631 價格 (float)
     price_631 = st.number_input(
         f"00631 最新價格 (元/股) - 預設: {st.session_state['price_631_default']:,.2f}", 
         min_value=10.0, 
@@ -123,14 +120,16 @@ with col1:
 
 with col2:
     st.subheader("市場資訊")
-    # 使用 session_state 中的值作為預設值
+    # 台指加權指數 (int)
     current_index = st.number_input(
         f"台指加權指數 (點) - 預設: {st.session_state['index_twii_default']:,.0f}", 
         min_value=5000, 
+        # 【🚨 修正點 D：確保傳入 value 的值是整數 🚨】
         value=st.session_state['index_twii_default'], 
         step=10,
     )
     
+# ... (後續的計算與結果展示邏輯保持不變) ...
 # ==============================================================================
 # 計算邏輯
 # ==============================================================================
