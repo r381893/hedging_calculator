@@ -16,7 +16,31 @@ LEVERAGE_RATIO = 2.0
 # 台指小台（MTX）每點價值
 MTX_POINT_VALUE = 50 
 
-# 定義初始預設值，用於判斷是否為未載入數據的狀態    
+# 定義初始預設值，用於判斷是否為未載入數據的狀態
+INITIAL_MA_TWII_DEFAULT = 19000
+INITIAL_INDEX_TWII_DEFAULT = 19500
+
+st.set_page_config(
+    page_title="📈 00631 大盤避險口數計算機", 
+    layout="wide"
+)
+
+st.title("🛡️ 00631 大盤均線避險口數計算機")
+st.caption(f"避險訊號以 **大盤 ({TICKER_TWII}) 的均線** 為準，計算基於 **{TICKER_631} (兩倍槓桿)**。")
+
+
+# ==============================================================================
+# 數據抓取與 MA 計算函式
+# ==============================================================================
+
+@st.cache_data(ttl=600) 
+def fetch_data_for_exposure(ticker):
+    """抓取資產最新價格 (僅用於計算風險敞口)"""
+    try:
+        # 使用 '1d' interval 和 '2d' period 來確保獲取當日收盤價（如果市場已收盤）
+        data = yf.download(ticker, period='2d', interval='1d', progress=False)
+        if not data.empty and 'Close' in data.columns:
+            latest_price = data['Close'].iloc[-1]
             return round(float(latest_price), 2)
         return None
     except Exception as e:
