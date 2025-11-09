@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-import yfinance as yf # 引入 yfinance 函式庫
+import yfinance as yf 
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -29,19 +29,28 @@ st.caption(f"本計算機基於 **{TICKER_631} (兩倍槓桿)** 與 **台指小�
 # 數據抓取函式 (使用 Streamlit 快取優化性能)
 # ==============================================================================
 
-@st.cache_data(ttl=600) # 設定 10 分鐘 (600秒) 的快取時間，避免頻繁呼叫 API
+# 設定 10 分鐘 (600秒) 的快取時間
+@st.cache_data(ttl=600) 
 def fetch_latest_price(ticker):
-    """從 Yahoo Finance 抓取最新的收盤價"""
+    """從 Yahoo Finance 抓取最新的收盤價，並返回 float 或 None"""
     try:
         # 抓取最近兩天數據，確保拿到最新收盤價
+        # interval='1d' 是確保只拿日線數據
         data = yf.download(ticker, period='2d', interval='1d', progress=False)
-        if not data.empty:
-            # 使用最新一筆收盤價
+        
+        # 🚨 修正點：檢查 DataFrame 是否為空，且 'Close' 欄位存在
+        if not data.empty and 'Close' in data.columns:
             latest_price = data['Close'].iloc[-1]
-            return round(latest_price, 2)
-        return None
+            # 確保返回的是 Python float 而非 Pandas Series/numpy.float64
+            return round(float(latest_price), 2) 
+        
+        # 數據為空或結構不正確，在執行 log 中顯示錯誤
+        print(f"❌ 抓取 {ticker} 數據失敗：數據為空或結構不正確。")
+        return None # 失敗時返回 None
+        
     except Exception as e:
-        st.error(f"❌ 抓取 {ticker} 數據失敗，錯誤: {e}")
+        # 在執行 log 中顯示詳細的錯誤信息
+        print(f"❌ 抓取 {ticker} 數據發生錯誤: {e}")
         return None
 
 # ==============================================================================
@@ -53,22 +62,24 @@ if st.button("🚀 點擊獲取最新市場價格", type="primary"):
     latest_price_631 = fetch_latest_price(TICKER_631)
     latest_index_twii = fetch_latest_price(TICKER_TWII)
     
-    if latest_price_631 and latest_index_twii:
+    # 🚨 修正點：使用 is not None 判斷數據是否成功抓取 (避免 Pandas ValueError)
+    if latest_price_631 is not None and latest_index_twii is not None:
         st.session_state['price_631_default'] = latest_price_631
         st.session_state['index_twii_default'] = latest_index_twii
-        st.success(f"✅ 價格更新成功！{TICKER_631} 最新價: {latest_price_631:,.2f} | {TICKER_TWII} 最新點: {latest_index_twii:,.2f}")
+        st.success(f"✅ 價格更新成功！{TICKER_631} 最新價: {latest_price_631:,.2f} | {TICKER_TWII} 最新點: {latest_index_twii:,.0f}")
     else:
-        st.warning("數據抓取失敗，請手動輸入或稍後再試。")
+        # 如果任何一個抓取失敗，則警告並保留舊值 (或預設值)
+        st.warning("⚠️ 數據抓取失敗！請檢查 ticker 是否正確或稍後再試。App 將使用預設或上次成功載入的值。")
 else:
     # 設置初始狀態值，避免首次執行時出錯
     if 'price_631_default' not in st.session_state:
         st.session_state['price_631_default'] = 50.0 # 預設值
     if 'index_twii_default' not in st.session_state:
-        st.session_state['index_twii_default'] = 19500 # 預設值
+        st.session_state['index_twii_default'] = 19500.0 # 預設值
 
 
 # ==============================================================================
-# 側邊欄輸入：策略參數 (保持不變)
+# 側邊欄輸入：策略參數
 # ==============================================================================
 st.sidebar.header("📜 避險策略設定")
 
@@ -121,7 +132,7 @@ with col2:
     )
     
 # ==============================================================================
-# 計算邏輯 (保持不變)
+# 計算邏輯
 # ==============================================================================
 
 # 1. 00631 總名目價值（1X）
@@ -141,7 +152,7 @@ required_lots_ceil = np.ceil(required_lots_float)
 
 
 # ==============================================================================
-# 結果展示 (保持邏輯不變，僅調整呈現)
+# 結果展示
 # ==============================================================================
 st.markdown("---")
 st.subheader("🎯 避險動作與口數建議")
