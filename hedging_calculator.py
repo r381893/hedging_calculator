@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-import yfinance as yf 
+import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -9,19 +9,20 @@ from datetime import datetime, timedelta
 # ==============================================================================
 # 股票代號 (Yahoo Finance Tickers)
 TICKER_631 = '00631L.TW'  # 元大台灣50正2
-TICKER_TWII = '^TWII'     # 台指加權指數
+TICKER_TWII = '^TWII'      # 台指加權指數
 
 # 00631 (元大台灣50正2) 的槓桿倍數
 LEVERAGE_RATIO = 2.0
 # 台指小台（MTX）每點價值
-MTX_POINT_VALUE = 50 
+MTX_POINT_VALUE = 50
 
 # 定義初始預設值，用於判斷是否為未載入數據的狀態
 INITIAL_MA_TWII_DEFAULT = 19000
 INITIAL_INDEX_TWII_DEFAULT = 19500
+INITIAL_PRICE_631_DEFAULT = 50.0 # 新增 00631 預設值
 
 st.set_page_config(
-    page_title="📈 00631 大盤避險口數計算機", 
+    page_title="📈 00631 大盤避險口數計算機",
     layout="wide"
 )
 
@@ -33,7 +34,7 @@ st.caption(f"避險訊號以 **大盤 ({TICKER_TWII}) 的均線** 為準，計�
 # 數據抓取與 MA 計算函式
 # ==============================================================================
 
-@st.cache_data(ttl=600) 
+@st.cache_data(ttl=600)
 def fetch_data_for_exposure(ticker):
     """抓取資產最新價格 (僅用於計算風險敞口)"""
     try:
@@ -47,23 +48,23 @@ def fetch_data_for_exposure(ticker):
         print(f"❌ 抓取 {ticker} 最新價失敗: {e}")
         return None
 
-@st.cache_data(ttl=600) 
+@st.cache_data(ttl=600)
 def fetch_twii_and_calculate_ma(ma_days):
     """抓取台指數據並計算移動平均 (用於避險訊號)"""
     try:
         # 抓取足夠的數據來計算 MA
         data = yf.download(TICKER_TWII, period='6mo', interval='1d', progress=False)
-        
+
         if data.empty or 'Close' not in data.columns:
-            return None, None 
-        
+            return None, None
+
         latest_price = data['Close'].iloc[-1]
         data['MA'] = data['Close'].rolling(window=ma_days).mean()
         ma_price = data['MA'].iloc[-1]
 
         # 指數點位取整數
         return int(round(latest_price, 0)), int(round(ma_price, 0))
-        
+
     except Exception as e:
         print(f"❌ 抓取 {TICKER_TWII} 數據發生錯誤: {e}")
         return None, None
@@ -82,36 +83,48 @@ ma_days = st.sidebar.number_input(
 )
 
 # ==============================================================================
-# 數據獲取與按鈕 (僅對大盤執行 MA 計算)
+# 數據獲取與 MA 計算 (修正：MA 計算移出按鈕，00631 價格保留在按鈕中)
 # ==============================================================================
 
 # 設置初始狀態值 (確保在按鈕點擊前 session_state 存在)
 if 'price_631_default' not in st.session_state:
-    st.session_state['price_631_default'] = 50.0 
+    st.session_state['price_631_default'] = INITIAL_PRICE_631_DEFAULT
 if 'index_twii_default' not in st.session_state:
-    st.session_state['index_twii_default'] = INITIAL_INDEX_TWII_DEFAULT 
+    st.session_state['index_twii_default'] = INITIAL_INDEX_TWII_DEFAULT
 if 'ma_price_twii' not in st.session_state:
     st.session_state['ma_price_twii'] = INITIAL_MA_TWII_DEFAULT # 初始預設 MA
 
-if st.button("🚀 點擊獲取最新市場數據 (含大盤均線計算)", type="primary"):
-    # 1. 抓取 00631 最新價 
-    latest_price_631 = fetch_data_for_exposure(TICKER_631)
-    
-    # 2. 抓取台指加權指數最新點位和 MA 點位
-    latest_index_twii, ma_price_twii = fetch_twii_and_calculate_ma(ma_days)
-    
-    # 判斷數據是否成功抓取
-    if latest_price_631 is not None and latest_index_twii is not None and ma_price_twii is not None:
-        st.session_state['price_631_default'] = latest_price_631
-        st.session_state['index_twii_default'] = latest_index_twii
-        st.session_state['ma_price_twii'] = ma_price_twii 
-        st.success(f"✅ 數據更新成功！大盤 ({TICKER_TWII}) 最新價: {latest_index_twii:,.0f}, MA 點: {ma_price_twii:,.0f}")
-    else:
-        st.warning("⚠️ 數據抓取或計算均線失敗！請檢查 ticker 或稍後再試。")
 
+# 1. 每次腳本重新運行時，都根據新的 ma_days 抓取並計算 MA
+# 由於使用了 @st.cache_data，只要 ma_days 不變，就不會重新下載數據。
+latest_index_twii, ma_price_twii = fetch_twii_and_calculate_ma(ma_days)
+
+# 設置或更新 session_state 
+if latest_index_twii is not None and ma_price_twii is not None:
+    # 僅更新指數和 MA 點位
+    st.session_state['index_twii_default'] = latest_index_twii
+    st.session_state['ma_price_twii'] = ma_price_twii
+    
+    # 顯示狀態提示
+    st.info(f"💡 **大盤 ({TICKER_TWII}) 數據已即時更新：** 最新價: {st.session_state['index_twii_default']:,.0f}, {ma_days}日 MA 點: {st.session_state['ma_price_twii']:,.0f}")
+else:
+    st.warning("⚠️ **大盤指數/均線數據載入失敗！** 使用預設值進行計算。")
+
+
+# 2. 獲取 00631 價格的按鈕 (手動觸發)
+if st.button("🚀 點擊獲取 00631 最新價格", type="primary"):
+    latest_price_631 = fetch_data_for_exposure(TICKER_631)
+
+    if latest_price_631 is not None:
+        st.session_state['price_631_default'] = latest_price_631
+        st.success(f"✅ **00631 價格更新成功！** 最新價: {latest_price_631:,.2f}")
+    else:
+        st.warning("⚠️ 00631 數據抓取失敗！請檢查 ticker 或稍後再試。")
+
+st.markdown("---")
 
 # ==============================================================================
-# 側邊欄顯示 MA 計算結果 (優化預設值顯示)
+# 側邊欄顯示 MA 計算結果 (現在會即時更新)
 # ==============================================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader(f"計算結果：大盤 ({ma_days} 日均線)")
@@ -122,22 +135,22 @@ is_default_ma = st.session_state['ma_price_twii'] == INITIAL_MA_TWII_DEFAULT
 ma_display_label = f"{TICKER_TWII} MA 點"
 
 if is_default_ma:
-    # 顯示提示訊息，而不是誤導性的數字
-    st.sidebar.info("請先點擊上方按鈕載入數據，MA 點位才會顯示。")
+    # 顯示預設值提示
+    st.sidebar.info("請等待數據載入或檢查網路連線。")
     ma_display_value = f"預設值: {INITIAL_MA_TWII_DEFAULT} 點"
     ma_display_delta = None
 else:
     # 顯示實際計算出的點位
     ma_price_twii = st.session_state['ma_price_twii']
     ma_display_value = f"{ma_price_twii:,.0f} 點"
-    ma_display_delta = None 
+    ma_display_delta = None
 
-# 僅顯示大盤的均線點
+# 顯示大盤的均線點
 st.sidebar.metric(
     ma_display_label,
     ma_display_value,
     delta=ma_display_delta,
-    help=f"最新的 {ma_days} 日移動平均點位。"
+    help=f"最新的 {ma_days} 日移動平均點位。當您更改上方天數時，此數據會即時變動。"
 )
 
 st.sidebar.markdown("---")
@@ -161,16 +174,16 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("持倉部位")
     holding_lots = st.number_input(
-        "00631 持有張數 (張)", 
-        min_value=1, 
-        value=7, 
+        "00631 持有張數 (張)",
+        min_value=1,
+        value=7,
         step=1,
     )
     # 00631 價格 (float)
     price_631 = st.number_input(
-        f"00631 最新價格 (元/股) - 預設: {st.session_state['price_631_default']:,.2f}", 
-        min_value=10.0, 
-        value=st.session_state['price_631_default'], 
+        f"00631 最新價格 (元/股) - 預設: {st.session_state['price_631_default']:,.2f}",
+        min_value=10.0,
+        value=st.session_state['price_631_default'],
         step=0.1,
         format="%.2f",
     )
@@ -179,12 +192,12 @@ with col2:
     st.subheader("市場資訊")
     # 台指加權指數 (int)
     current_index = st.number_input(
-        f"台指加權指數 (點) - 預設: {st.session_state['index_twii_default']:,.0f}", 
-        min_value=5000, 
-        value=st.session_state['index_twii_default'], 
+        f"台指加權指數 (點) - 預設: {st.session_state['index_twii_default']:,.0f}",
+        min_value=5000,
+        value=st.session_state['index_twii_default'],
         step=10,
     )
-    
+
 # ==============================================================================
 # 計算邏輯 (風險敞口與避險口數)
 # ==============================================================================
@@ -234,7 +247,7 @@ if is_bullish: # 指數 > MA (多頭訊號，不需避險)
     elif current_status == "目前已避險 (持有 00631 多倉 + 小台空倉)":
         action_required = "🟢 平倉避險空單 (解除避險)"
         suggested_lots = required_lots_ceil
-        
+
 else: # 指數 <= MA (空頭/避險訊號，需要避險)
     if current_status == "目前持有 00631 多倉，未避險":
         action_required = "🔴 立即建立空單避險"
@@ -288,4 +301,4 @@ else:
     col7.metric("🔥 建議操作口數 (口)", "0 口")
 
 st.markdown("---")
-st.info(f"**💡 避險邏輯摘要：** (基於 **大盤 {ma_days} 日均線**)\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(required_lots_ceil):,} 口** 來確保足額對沖。\n\n**數據更新時間：** 點擊「🚀 獲取最新市場數據」按鈕後，數據會在 10 分鐘內被快取，並計算 {ma_days} 日均線。")
+st.info(f"**💡 避險邏輯摘要：** (基於 **大盤 {ma_days} 日均線**)\n\n1. 您的 {holding_lots} 張 00631 總風險敞口約為 **{effective_exposure:,.0f} 元**。\n2. 由於小台合約價值約為 **{mtx_contract_value:,.0f} 元**，您理論上應建立 **{required_lots_float:.2f} 口** 空單才能完全對沖。\n3. 我們建議採用 **無條件進位**，即操作 **{int(required_lots_ceil):,} 口** 來確保足額對沖。\n\n**數據更新時間：** 大盤指數和均線會依據 {ma_days} **即時計算** (若 yfinance 數據有更新且 cache 逾時)。00631 價格需要點擊「🚀 獲取 00631 最新價格」按鈕手動更新。")
